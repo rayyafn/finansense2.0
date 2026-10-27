@@ -9,11 +9,13 @@ import {
   User, 
   PlusCircle,
   Menu,
-  X
+  X,
+  Database,
+  Cloud
 } from 'lucide-react';
 
 export const Navbar = ({ onOpenTransactionModal, activeTab, setActiveTab, mobileMenuOpen, setMobileMenuOpen }) => {
-  const { currentUser, logout, saldoDisponivel, riscoDeficit } = useFinance();
+  const { currentUser, logout, saldoDisponivel, riscoDeficit, dbConnected, apiOnline } = useFinance();
 
   return (
     <header className="sticky top-0 z-30 bg-white/95 backdrop-blur border-b border-slate-200">
@@ -43,9 +45,30 @@ export const Navbar = ({ onOpenTransactionModal, activeTab, setActiveTab, mobile
             </div>
           </div>
 
-          {/* Saldo Rápido & Ação de Novo Lançamento */}
-          <div className="flex items-center gap-3 sm:gap-4">
+          {/* Saldo Rápido, Status do Banco & Ação de Novo Lançamento */}
+          <div className="flex items-center gap-2 sm:gap-3">
             
+            {/* Status do Banco / Servidor */}
+            <div className="hidden lg:flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border bg-slate-50">
+              {dbConnected ? (
+                <>
+                  <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                  <Database size={13} className="text-emerald-700" />
+                  <span className="text-emerald-800 text-[11px] font-semibold">MySQL 8.0</span>
+                </>
+              ) : apiOnline ? (
+                <>
+                  <span className="w-2 h-2 rounded-full bg-sky-500"></span>
+                  <span className="text-sky-800 text-[11px] font-semibold">API REST Ativa</span>
+                </>
+              ) : (
+                <>
+                  <Cloud size={13} className="text-indigo-600" />
+                  <span className="text-slate-600 text-[11px]">Nuvem / Demo</span>
+                </>
+              )}
+            </div>
+
             {/* Pill de Saldo Disponível */}
             <div className={`hidden sm:flex items-center gap-2 px-3.5 py-1.5 rounded-full text-sm font-semibold border ${
               saldoDisponivel >= 0 
@@ -71,7 +94,7 @@ export const Navbar = ({ onOpenTransactionModal, activeTab, setActiveTab, mobile
             {/* Usuário e Logout */}
             {currentUser && (
               <div className="flex items-center gap-2 pl-2 border-l border-slate-200">
-                <div className="hidden lg:block text-right">
+                <div className="hidden xl:block text-right">
                   <p className="text-xs font-semibold text-slate-800 truncate max-w-[150px]">{currentUser.nome}</p>
                   <p className="text-[10px] text-slate-600">{currentUser.email}</p>
                 </div>

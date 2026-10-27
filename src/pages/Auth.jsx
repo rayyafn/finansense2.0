@@ -1,44 +1,72 @@
 import React, { useState } from 'react';
 import { useFinance } from '../context/FinanceContext';
-import { Wallet, ShieldCheck, Lock, Mail, User, KeyRound, ArrowRight, CheckCircle2, AlertCircle } from 'lucide-react';
+import { Wallet, ShieldCheck, Lock, Mail, User, KeyRound, ArrowRight, CheckCircle2, AlertCircle, Database, Server } from 'lucide-react';
 
 export const Auth = () => {
-  const { login, register, requestPasswordReset } = useFinance();
+  const { login, register, requestPasswordReset, apiOnline, dbConnected } = useFinance();
   const [view, setView] = useState('login'); // 'login', 'register', 'forgot'
 
   // Estados dos formulários
   const [nome, setNome] = useState('');
   const [email, setEmail] = useState('raiany@finansense.com');
   const [senha, setSenha] = useState('123456');
+  const [loading, setLoading] = useState(false);
   const [feedback, setFeedback] = useState({ tipo: '', mensagem: '' });
 
-  const handleLogin = (e) => {
+  const handleLogin = async (e) => {
     e.preventDefault();
     setFeedback({ tipo: '', mensagem: '' });
-    const res = login(email, senha);
-    if (!res.success) {
-      setFeedback({ tipo: 'erro', mensagem: res.message });
+    setLoading(true);
+    try {
+      const res = await login(email, senha);
+      if (!res.success) {
+        setFeedback({ tipo: 'erro', mensagem: res.message });
+      }
+    } catch (err) {
+      setFeedback({ tipo: 'erro', mensagem: err.message || 'Erro ao realizar login.' });
+    } finally {
+      setLoading(false);
     }
   };
 
-  const handleRegister = (e) => {
+  const handleRegister = async (e) => {
     e.preventDefault();
     setFeedback({ tipo: '', mensagem: '' });
-    const res = register(nome, email, senha);
-    if (!res.success) {
-      setFeedback({ tipo: 'erro', mensagem: res.message });
+    setLoading(true);
+    try {
+      const res = await register(nome, email, senha);
+      if (!res.success) {
+        setFeedback({ tipo: 'erro', mensagem: res.message });
+      }
+    } catch (err) {
+      setFeedback({ tipo: 'erro', mensagem: err.message || 'Erro ao realizar cadastro.' });
+    } finally {
+      setLoading(false);
     }
   };
 
-  const handleForgot = (e) => {
+  const handleForgot = async (e) => {
     e.preventDefault();
     setFeedback({ tipo: '', mensagem: '' });
-    const res = requestPasswordReset(email);
-    if (res.success) {
-      setFeedback({ tipo: 'sucesso', mensagem: res.message });
-    } else {
-      setFeedback({ tipo: 'erro', mensagem: res.message });
+    setLoading(true);
+    try {
+      const res = await requestPasswordReset(email);
+      if (res.success) {
+        setFeedback({ tipo: 'sucesso', mensagem: res.message });
+      } else {
+        setFeedback({ tipo: 'erro', mensagem: res.message });
+      }
+    } catch (err) {
+      setFeedback({ tipo: 'erro', mensagem: err.message || 'Erro ao solicitar recuperação.' });
+    } finally {
+      setLoading(false);
     }
+  };
+
+  const prefillTestUser = (testEmail, testSenha) => {
+    setEmail(testEmail);
+    setSenha(testSenha);
+    setFeedback({ tipo: '', mensagem: '' });
   };
 
   return (
@@ -55,6 +83,28 @@ export const Auth = () => {
         <p className="mt-1 text-xs text-slate-600">
           Controle Financeiro Pessoal Inteligente para Jovens
         </p>
+
+        {/* Badge de Status de Conexão com o Banco */}
+        <div className="mt-2 inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[11px] font-medium border bg-white shadow-sm">
+          {dbConnected ? (
+            <>
+              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+              <Database size={13} className="text-emerald-700" />
+              <span className="text-emerald-800 font-semibold">MySQL 8.0 Conectado</span>
+            </>
+          ) : apiOnline ? (
+            <>
+              <span className="w-2 h-2 rounded-full bg-sky-500 animate-pulse"></span>
+              <Server size={13} className="text-sky-700" />
+              <span className="text-sky-800 font-semibold">API REST Ativa</span>
+            </>
+          ) : (
+            <>
+              <span className="w-2 h-2 rounded-full bg-indigo-500"></span>
+              <span className="text-slate-600">Modo Nuvem / Demonstração Ativo</span>
+            </>
+          )}
+        </div>
       </div>
 
       <div className="mt-6 sm:mx-auto sm:w-full sm:max-w-md px-4 sm:px-0">
@@ -136,11 +186,37 @@ export const Auth = () => {
 
               <button
                 type="submit"
-                className="w-full py-2.5 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs transition shadow-md shadow-emerald-600/30 flex items-center justify-center gap-2"
+                disabled={loading}
+                className="w-full py-2.5 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-bold text-xs transition shadow-md shadow-emerald-600/30 flex items-center justify-center gap-2"
               >
-                <span>Acessar Painel Financeiro</span>
+                <span>{loading ? 'Validando acesso...' : 'Acessar Painel Financeiro'}</span>
                 <ArrowRight size={16} />
               </button>
+
+              {/* Botões Rápidos de Usuário de Teste (Para Avaliação) */}
+              <div className="pt-3 border-t border-slate-100">
+                <p className="text-[11px] text-slate-600 font-semibold mb-2 text-center">Contas de Teste Pré-configuradas:</p>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => prefillTestUser('raiany@finansense.com', '123456')}
+                    className="p-2 border border-slate-200 rounded-xl text-left hover:bg-slate-50 transition"
+                  >
+                    <p className="text-[11px] font-bold text-slate-800 leading-tight">Raiany (Estudante)</p>
+                    <p className="text-[10px] text-slate-600 leading-tight">raiany@finansense.com</p>
+                    <span className="text-[10px] text-emerald-700 font-mono">123456</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => prefillTestUser('professor@finansense.com', 'teste123')}
+                    className="p-2 border border-slate-200 rounded-xl text-left hover:bg-slate-50 transition"
+                  >
+                    <p className="text-[11px] font-bold text-slate-800 leading-tight">Docente Avaliador</p>
+                    <p className="text-[10px] text-slate-600 leading-tight">professor@finansense.com</p>
+                    <span className="text-[10px] text-emerald-700 font-mono">teste123</span>
+                  </button>
+                </div>
+              </div>
             </form>
           )}
 
@@ -194,9 +270,10 @@ export const Auth = () => {
 
               <button
                 type="submit"
-                className="w-full py-2.5 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs transition shadow-md shadow-emerald-600/30 flex items-center justify-center gap-2"
+                disabled={loading}
+                className="w-full py-2.5 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-bold text-xs transition shadow-md shadow-emerald-600/30 flex items-center justify-center gap-2"
               >
-                <span>Criar Minha Conta Gratuita</span>
+                <span>{loading ? 'Cadastrando no banco...' : 'Criar Minha Conta Gratuita'}</span>
                 <ArrowRight size={16} />
               </button>
             </form>
@@ -225,10 +302,11 @@ export const Auth = () => {
 
               <button
                 type="submit"
-                className="w-full py-2.5 px-4 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs transition flex items-center justify-center gap-2"
+                disabled={loading}
+                className="w-full py-2.5 px-4 rounded-xl bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white font-bold text-xs transition flex items-center justify-center gap-2"
               >
                 <KeyRound size={16} />
-                <span>Enviar Token de Recuperação</span>
+                <span>{loading ? 'Gerando token...' : 'Enviar Token de Recuperação'}</span>
               </button>
 
               <button

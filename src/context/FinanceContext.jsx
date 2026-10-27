@@ -1,9 +1,26 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import {
   DEFAULT_CATEGORIES,
   INITIAL_USER,
   INITIAL_TRANSACTIONS
 } from '../data/initialData';
+import {
+  checkHealth,
+  apiLogin,
+  apiRegister,
+  apiForgotPassword,
+  apiGetCategorias,
+  apiCreateCategoria,
+  apiDeleteCategoria,
+  apiGetReceitas,
+  apiCreateReceita,
+  apiDeleteReceita,
+  apiGetDespesas,
+  apiCreateDespesa,
+  apiUpdateDespesaStatus,
+  apiDeleteDespesa,
+  setAuthToken
+} from '../services/api';
 
 const FinanceContext = createContext();
 
@@ -16,6 +33,11 @@ export const useFinance = () => {
 };
 
 export const FinanceProvider = ({ children }) => {
+  // Estado de Conexão com o Banco de Dados / API
+  const [apiOnline, setApiOnline] = useState(false);
+  const [dbConnected, setDbConnected] = useState(false);
+  const [loadingData, setLoadingData] = useState(false);
+
   // Autenticação e Usuário
   const [currentUser, setCurrentUser] = useState(() => {
     const saved = localStorage.getItem('finansense_user');
@@ -46,12 +68,56 @@ export const FinanceProvider = ({ children }) => {
     return saved ? JSON.parse(saved) : INITIAL_TRANSACTIONS.parcelamentos;
   });
 
-  // Persistência no LocalStorage
+  // Checa status do backend MySQL periodicamente na inicialização
+  const verifyBackendStatus = useCallback(async () => {
+    try {
+      const health = await checkHealth();
+      setApiOnline(health.online);
+      setDbConnected(health.dbConnected);
+      return health;
+    } catch {
+      setApiOnline(false);
+      setDbConnected(false);
+      return { online: false, dbConnected: false };
+    }
+  }, []);
+
+  // Carrega dados do MySQL se conectado
+  const loadDataFromApi = useCallback(async () => {
+    if (!currentUser) return;
+    setLoadingData(true);
+    try {
+      const [cats, recs, desps] = await Promise.all([
+        apiGetCategorias().catch(() => null),
+        apiGetReceitas().catch(() => null),
+        apiGetDespesas().catch(() => null)
+      ]);
+
+      if (cats && cats.length > 0) setCategories(cats);
+      if (recs && Array.isArray(recs)) setReceitas(recs);
+      if (desps && Array.isArray(desps)) setDespesas(desps);
+    } catch (err) {
+      console.warn('Fallback para cache local:', err.message);
+    } finally {
+      setLoadingData(false);
+    }
+  }, [currentUser]);
+
+  useEffect(() => {
+    verifyBackendStatus().then((status) => {
+      if (status.online && status.dbConnected) {
+        loadDataFromApi();
+      }
+    });
+  }, [verifyBackendStatus, loadDataFromApi]);
+
+  // Persistência resiliente no LocalStorage
   useEffect(() => {
     if (currentUser) {
       localStorage.setItem('finansense_user', JSON.stringify(currentUser));
     } else {
       localStorage.removeItem('finansense_user');
+      setAuthToken(null);
     }
   }, [currentUser]);
 
@@ -82,31 +148,65 @@ export const FinanceProvider = ({ children }) => {
   };
 
   // 1. MÓDULO DE AUTENTICAÇÃO (RF01, RF02, RF03)
-  const login = (email, senha) => {
-    // Simulação com validação segura
+  const login = async (email, senha) => {
     if (!email || !senha) {
       return { success: false, message: 'Preencha e-mail e senha.' };
     }
+
+    try {
+      if (apiOnline) {
+        const res = await apiLogin(email, senha);
+        setCurrentUser(res.usuario);
+        if (dbConnected) {
+          await loadDataFromApi();
+        }
+        return { success: true };
+      }
+    } catch (err) {
+      // Se a API retornou erro específico de credencial inválida, reporta
+      if (err.message && !err.message.includes('fetch')) {
+        return { success: false, message: err.message };
+      }
+    }
+
+    // Fallback para modo local / simulação caso a API não esteja ativa
+    const isRaiany = email.toLowerCase().includes('raiany');
+    const isProfessor = email.toLowerCase().includes('professor') || email.toLowerCase().includes('rafael');
     const user = {
-      id_usuario: 1,
-      nome: email.includes('raiany') ? 'Raiany Alexandra Felix do Nascimento' : 'Usuário FinanSense',
+      id_usuario: isRaiany ? 1 : (isProfessor ? 2 : 1),
+      nome: isRaiany ? 'Raiany Alexandra Felix do Nascimento' : (isProfessor ? 'Professor Avaliador' : 'Usuário FinanSense'),
       email: email,
-      turma: '3º B - Informática',
+      turma: isProfessor ? 'Docente Avaliador' : '3º B - Técnico em Informática',
+      perfil: isProfessor ? 'administrador' : 'estudante',
       data_criacao: new Date().toISOString()
     };
     setCurrentUser(user);
     return { success: true };
   };
 
-  const register = (nome, email, senha) => {
+  const register = async (nome, email, senha) => {
     if (!nome || !email || !senha) {
       return { success: false, message: 'Todos os campos são obrigatórios.' };
     }
+
+    try {
+      if (apiOnline) {
+        const res = await apiRegister(nome, email, senha, '3º B - Técnico em Informática');
+        setCurrentUser(res.usuario);
+        return { success: true };
+      }
+    } catch (err) {
+      if (err.message && !err.message.includes('fetch')) {
+        return { success: false, message: err.message };
+      }
+    }
+
     const newUser = {
       id_usuario: Date.now(),
       nome,
       email,
-      turma: 'Estudante / Jovem Autônomo',
+      turma: '3º B - Técnico em Informática',
+      perfil: 'estudante',
       data_criacao: new Date().toISOString()
     };
     setCurrentUser(newUser);
@@ -115,10 +215,19 @@ export const FinanceProvider = ({ children }) => {
 
   const logout = () => {
     setCurrentUser(null);
+    setAuthToken(null);
   };
 
-  const requestPasswordReset = (email) => {
+  const requestPasswordReset = async (email) => {
     if (!email) return { success: false, message: 'Informe o e-mail cadastrado.' };
+    try {
+      if (apiOnline) {
+        const res = await apiForgotPassword(email);
+        return { success: true, message: res.message };
+      }
+    } catch {
+      // Fallback
+    }
     const fakeToken = Math.random().toString(36).substring(2, 8).toUpperCase();
     return {
       success: true,
@@ -127,18 +236,29 @@ export const FinanceProvider = ({ children }) => {
   };
 
   // 2. MÓDULO DE CATEGORIAS (RF10 / CA06)
-  const addCategory = ({ nome, tipo, cor = '#6366f1', icone = 'Tag' }) => {
-    const newCategory = {
+  const addCategory = async ({ nome, tipo, cor = '#6366f1', icone = 'Tag' }) => {
+    const catData = {
       id_categoria: Date.now(),
       id_usuario: currentUser ? currentUser.id_usuario : 1,
       nome,
-      tipo, // 'receita' ou 'despesa'
+      tipo,
       eh_padrao: false,
       cor,
       icone
     };
-    setCategories((prev) => [...prev, newCategory]);
-    return newCategory;
+
+    if (apiOnline && dbConnected) {
+      try {
+        const created = await apiCreateCategoria(catData);
+        setCategories((prev) => [...prev, created]);
+        return created;
+      } catch (err) {
+        console.warn('Erro na API de categorias, gravando local:', err);
+      }
+    }
+
+    setCategories((prev) => [...prev, catData]);
+    return catData;
   };
 
   const updateCategory = (id_categoria, { nome, tipo, cor, icone }) => {
@@ -158,24 +278,46 @@ export const FinanceProvider = ({ children }) => {
     );
   };
 
-  const deleteCategory = (id_categoria) => {
+  const deleteCategory = async (id_categoria) => {
+    if (apiOnline && dbConnected) {
+      try {
+        await apiDeleteCategoria(id_categoria);
+      } catch (err) {
+        console.warn('Erro ao deletar categoria na API:', err);
+      }
+    }
     setCategories((prev) => prev.filter((c) => c.id_categoria !== id_categoria || c.eh_padrao));
   };
 
   // 3. MÓDULO DE RECEITAS (RF05, RF09)
-  const addReceita = ({ descricao, valor, data_recebimento, id_categoria, eh_recorrente = false }) => {
+  const addReceita = async ({ descricao, valor, data_recebimento, id_categoria, eh_recorrente = false }) => {
     const parsedValor = parseFloat(valor);
     if (!descricao || isNaN(parsedValor) || parsedValor <= 0) {
       throw new Error('Informe uma descrição e um valor maior que zero.');
     }
-    const newReceita = {
-      id_receita: Date.now(),
-      id_usuario: currentUser ? currentUser.id_usuario : 1,
-      id_categoria: parseInt(id_categoria),
+
+    const payload = {
       descricao,
       valor: parsedValor,
       data_recebimento: data_recebimento || getTodayStr(),
+      id_categoria: parseInt(id_categoria, 10),
       eh_recorrente: Boolean(eh_recorrente),
+    };
+
+    if (apiOnline && dbConnected) {
+      try {
+        const created = await apiCreateReceita(payload);
+        setReceitas((prev) => [created, ...prev]);
+        return created;
+      } catch (err) {
+        console.warn('Erro na API de receitas, fallback local:', err);
+      }
+    }
+
+    const newReceita = {
+      id_receita: Date.now(),
+      id_usuario: currentUser ? currentUser.id_usuario : 1,
+      ...payload
     };
     setReceitas((prev) => [newReceita, ...prev]);
     return newReceita;
@@ -200,17 +342,24 @@ export const FinanceProvider = ({ children }) => {
     );
   };
 
-  const deleteReceita = (id_receita) => {
+  const deleteReceita = async (id_receita) => {
+    if (apiOnline && dbConnected) {
+      try {
+        await apiDeleteReceita(id_receita);
+      } catch (err) {
+        console.warn('Erro ao excluir receita na API:', err);
+      }
+    }
     setReceitas((prev) => prev.filter((r) => r.id_receita !== id_receita));
   };
 
   // 4. MÓDULO DE DESPESAS E PARCELAMENTOS (RF06, RF08, RF09 / CA02)
-  const addDespesa = ({
+  const addDespesa = async ({
     descricao,
     valor_total,
     data_vencimento,
     id_categoria,
-    tipo = 'variavel', // 'fixa', 'variavel', 'parcelada'
+    tipo = 'variavel',
     total_parcelas = 1,
     status = 'a_pagar'
   }) => {
@@ -219,18 +368,42 @@ export const FinanceProvider = ({ children }) => {
       throw new Error('Informe uma descrição e um valor total válido maior que zero.');
     }
 
-    const idDespesa = Date.now();
-    const isParcelada = tipo === 'parcelada' && parseInt(total_parcelas) > 1;
-    const numParcelas = isParcelada ? parseInt(total_parcelas) : 1;
+    const isParcelada = tipo === 'parcelada' && parseInt(total_parcelas, 10) > 1;
+    const numParcelas = isParcelada ? parseInt(total_parcelas, 10) : 1;
     const valorParcela = parseFloat((parsedValor / numParcelas).toFixed(2));
+    const dataVenc = data_vencimento || getTodayStr();
 
+    const payload = {
+      descricao,
+      valor_total: parsedValor,
+      data_vencimento: dataVenc,
+      id_categoria: parseInt(id_categoria, 10),
+      tipo,
+      total_parcelas: numParcelas,
+      status
+    };
+
+    if (apiOnline && dbConnected) {
+      try {
+        const created = await apiCreateDespesa(payload);
+        setDespesas((prev) => [created, ...prev]);
+        if (created.parcelamentos && created.parcelamentos.length > 0) {
+          setParcelamentos((prev) => [...created.parcelamentos, ...prev]);
+        }
+        return created;
+      } catch (err) {
+        console.warn('Erro ao salvar despesa na API, fallback local:', err);
+      }
+    }
+
+    const idDespesa = Date.now();
     const novaDespesa = {
       id_despesa: idDespesa,
       id_usuario: currentUser ? currentUser.id_usuario : 1,
-      id_categoria: parseInt(id_categoria),
+      id_categoria: parseInt(id_categoria, 10),
       descricao,
       valor_total: parsedValor,
-      data_vencimento: data_vencimento || getTodayStr(),
+      data_vencimento: dataVenc,
       status: status,
       tipo: tipo,
       parcelamento_info: isParcelada ? {
@@ -242,9 +415,9 @@ export const FinanceProvider = ({ children }) => {
 
     setDespesas((prev) => [novaDespesa, ...prev]);
 
-    // Geração automática das N parcelas com vencimentos nos meses subsequentes (RF08 / CA02)
+    // Geração automática das parcelas para simulação local (CA02)
     if (isParcelada) {
-      const baseDate = new Date(data_vencimento || getTodayStr());
+      const baseDate = new Date(dataVenc);
       const novasParcelas = [];
 
       for (let i = 1; i <= numParcelas; i++) {
@@ -295,16 +468,33 @@ export const FinanceProvider = ({ children }) => {
     );
   };
 
-  const deleteDespesa = (id_despesa) => {
+  const deleteDespesa = async (id_despesa) => {
+    if (apiOnline && dbConnected) {
+      try {
+        await apiDeleteDespesa(id_despesa);
+      } catch (err) {
+        console.warn('Erro ao excluir despesa na API:', err);
+      }
+    }
     setDespesas((prev) => prev.filter((d) => d.id_despesa !== id_despesa));
     setParcelamentos((prev) => prev.filter((p) => p.id_despesa !== id_despesa));
   };
 
-  const toggleDespesaStatus = (id_despesa) => {
+  const toggleDespesaStatus = async (id_despesa) => {
+    const despesaAtual = despesas.find((d) => d.id_despesa === id_despesa);
+    const novoStatus = despesaAtual?.status === 'paga' ? 'a_pagar' : 'paga';
+
+    if (apiOnline && dbConnected) {
+      try {
+        await apiUpdateDespesaStatus(id_despesa, novoStatus);
+      } catch (err) {
+        console.warn('Erro ao atualizar status na API:', err);
+      }
+    }
+
     setDespesas((prev) =>
       prev.map((d) => {
         if (d.id_despesa === id_despesa) {
-          const novoStatus = d.status === 'paga' ? 'a_pagar' : 'paga';
           return { ...d, status: novoStatus };
         }
         return d;
@@ -319,21 +509,19 @@ export const FinanceProvider = ({ children }) => {
   const userCategories = categories.filter((c) => c.eh_padrao || c.id_usuario === currentUserId);
 
   // 5. CÁLCULO DE INDICADORES DO DASHBOARD (RF11, RF12, RF13)
-  // Saldo Disponível Atual = Total Receitas Acumuladas - Total Despesas Pagas
-  const totalReceitas = userReceitas.reduce((acc, curr) => acc + curr.valor, 0);
+  const totalReceitas = userReceitas.reduce((acc, curr) => acc + parseFloat(curr.valor), 0);
   const totalDespesasPagas = userDespesas
     .filter((d) => d.status === 'paga')
-    .reduce((acc, curr) => acc + curr.valor_total, 0);
+    .reduce((acc, curr) => acc + parseFloat(curr.valor_total), 0);
   const saldoDisponivel = totalReceitas - totalDespesasPagas;
 
-  // Total de contas pendentes
   const totalDespesasPendentes = userDespesas
     .filter((d) => d.status !== 'paga')
-    .reduce((acc, curr) => acc + curr.valor_total, 0);
+    .reduce((acc, curr) => acc + parseFloat(curr.valor_total), 0);
 
   // Contas Vencidas (RF07 / CA03)
   const contasVencidas = userDespesas.filter((d) => isDespesaVencida(d));
-  const totalContasVencidas = contasVencidas.reduce((acc, curr) => acc + curr.valor_total, 0);
+  const totalContasVencidas = contasVencidas.reduce((acc, curr) => acc + parseFloat(curr.valor_total), 0);
 
   // Agenda dos Próximos 15 dias (RF12)
   const hoje = new Date();
@@ -347,7 +535,7 @@ export const FinanceProvider = ({ children }) => {
     return vDate >= hoje && vDate <= limite15Dias;
   }).sort((a, b) => new Date(a.data_vencimento) - new Date(b.data_vencimento));
 
-  const totalProximos15Dias = contasProximos15Dias.reduce((acc, curr) => acc + curr.valor_total, 0);
+  const totalProximos15Dias = contasProximos15Dias.reduce((acc, curr) => acc + parseFloat(curr.valor_total), 0);
 
   // Distribuição de Gastos por Categoria (RF13)
   const gastosPorCategoria = userCategories
@@ -355,7 +543,7 @@ export const FinanceProvider = ({ children }) => {
     .map((cat) => {
       const total = userDespesas
         .filter((d) => d.id_categoria === cat.id_categoria)
-        .reduce((acc, curr) => acc + curr.valor_total, 0);
+        .reduce((acc, curr) => acc + parseFloat(curr.valor_total), 0);
       return {
         id_categoria: cat.id_categoria,
         nome: cat.nome,
@@ -366,12 +554,10 @@ export const FinanceProvider = ({ children }) => {
     .filter((c) => c.total > 0);
 
   // 6. MOTOR PREDITIVO E DIAGNÓSTICOS EM LINGUAGEM NATURAL (RF14, RF15, RF16, RF17, RF18 / CA04, CA05)
-  // Cálculo da média dos últimos 3 meses por categoria
   const currentMonth = new Date().getMonth();
   const currentYear = new Date().getFullYear();
 
   const getCategoryStats = (id_categoria) => {
-    // Gastos no mês atual
     const gastosMesAtual = userDespesas
       .filter((d) => {
         const dDate = new Date(d.data_vencimento);
@@ -381,9 +567,8 @@ export const FinanceProvider = ({ children }) => {
           dDate.getFullYear() === currentYear
         );
       })
-      .reduce((acc, curr) => acc + curr.valor_total, 0);
+      .reduce((acc, curr) => acc + parseFloat(curr.valor_total), 0);
 
-    // Gastos nos 3 meses anteriores
     let soma3Meses = 0;
     for (let m = 1; m <= 3; m++) {
       const targetMonthDate = new Date(currentYear, currentMonth - m, 1);
@@ -399,7 +584,7 @@ export const FinanceProvider = ({ children }) => {
             dDate.getFullYear() === tYear
           );
         })
-        .reduce((acc, curr) => acc + curr.valor_total, 0);
+        .reduce((acc, curr) => acc + parseFloat(curr.valor_total), 0);
 
       soma3Meses += gastoMes;
     }
@@ -432,13 +617,12 @@ export const FinanceProvider = ({ children }) => {
     });
 
   // Projeção de Saldo Futuro e Alerta de Déficit (RF17, RF18 / CA05)
-  // Receitas previstas deste mês + saldo atual - compromissos a vencer até o fim do mês
   const receitasPrevistasMes = userReceitas
     .filter((r) => {
       const rDate = new Date(r.data_recebimento);
       return rDate.getMonth() === currentMonth && rDate.getFullYear() === currentYear;
     })
-    .reduce((acc, curr) => acc + curr.valor, 0);
+    .reduce((acc, curr) => acc + parseFloat(curr.valor), 0);
 
   const despesasAgendadasMes = userDespesas
     .filter((d) => {
@@ -449,9 +633,8 @@ export const FinanceProvider = ({ children }) => {
         dDate.getFullYear() === currentYear
       );
     })
-    .reduce((acc, curr) => acc + curr.valor_total, 0);
+    .reduce((acc, curr) => acc + parseFloat(curr.valor_total), 0);
 
-  // Estimativa de saldo ao fim do mês
   const projecaoSaldoFimDoMes = saldoDisponivel - despesasAgendadasMes;
   const riscoDeficit = projecaoSaldoFimDoMes < 0;
 
@@ -503,6 +686,10 @@ export const FinanceProvider = ({ children }) => {
         riscoDeficit,
         receitasPrevistasMes,
         despesasAgendadasMes,
+        apiOnline,
+        dbConnected,
+        verifyBackendStatus,
+        loadingData
       }}
     >
       {children}
