@@ -1,3 +1,17 @@
+# Environment Variables & Secrets (Checklist de Seguranca Anexo B)
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+*.env
+!.env.example
+
+# Database files & SQLite fallbacks
+*.sqlite
+*.sqlite3
+*.db
+
 # Logs
 logs
 *.log
